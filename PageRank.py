@@ -146,6 +146,7 @@ def compute_pagerank(
         # y_next = y_next / tf.reduce_sum(y_next) # It should already sum to 1
         return y_next
 
+    norm_warning_issued = False
     y = tf.ones(num_nodes, dtype=tf.float32) / tf.cast(num_nodes, tf.float32)
     for _ in range(max_iter):
         next_y = step(y, transition_matrix)
@@ -153,6 +154,16 @@ def compute_pagerank(
             # Break if the maximum change is below the tolerance
             break
         y = next_y
+        # Compute the 1-norm to check stability
+        norm = tf.reduce_sum(y)
+        if not norm_warning_issued and tf.abs(norm - 1.0) > 1.0e-6:
+            # NOTE: We should talk to the teacher about this. The norm obviously drifts,
+            # because of sink nodes, but it stabilizes very quick. Is it correct to re-normalize, as he proposes?
+            # I feel like we shouldn't. As long as PageRank converges, why should we care about the norm being 1?
+            # And also, it's not like it is caused by numerical instability or some other artifact, it's
+            # a property of the graph and the PageRank algorithm itself.
+            logger.warning(f"PageRank vector 1-norm is deviating from 1: {norm.numpy()}")
+            norm_warning_issued = True
     return y.numpy()
 
 

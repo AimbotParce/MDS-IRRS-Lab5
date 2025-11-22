@@ -126,11 +126,12 @@ def compute_pagerank(
     damping: float = 0.85,
     tolerance: float = 1.0e-6,
     max_iter: int = 100,
-    dead_end_strategy: Literal["always_teleport", None] = None,
+    dead_end_strategy: Literal["always-teleport", None] = None,
 ) -> Sequence[float]:
     assert 0 < damping < 1, "Damping factor must be between 0 and 1."
     assert tolerance > 0, "Tolerance must be positive."
     assert max_iter > 0, "Maximum iterations must be positive."
+    assert dead_end_strategy in (None, "always-teleport"), "Invalid dead-end strategy."
 
     # We'll attempt to simulate the power method.
     adjacency_matrix = compute_adjacency_matrix(airports, routes)
@@ -140,14 +141,8 @@ def compute_pagerank(
     out_degrees = tf.sparse.reduce_sum(adjacency_matrix, axis=1, keepdims=True)  # Column vector of out-degrees
     transition_matrix = adjacency_matrix / out_degrees  # type: ignore
 
-    if dead_end_strategy == "always_teleport":
-        # Implement the "Always Teleport from Dead Ends" strategy
+    if dead_end_strategy != None:
         dead_end_rows = tf.where(tf.equal(out_degrees, 0))[:, 0]
-        for dead_end in dead_end_rows.numpy():
-            indices = tf.constant([[dead_end, i] for i in range(num_nodes)], dtype=tf.int64)
-            values = tf.fill([num_nodes], 1.0 / num_nodes)
-            dead_end_row = tf.sparse.SparseTensor(indices=indices, values=values, dense_shape=[num_nodes, num_nodes])
-            transition_matrix = tf.sparse.add(tf.sparse.reorder(transition_matrix), tf.sparse.reorder(dead_end_row))
 
     transition_matrix = tf.sparse.transpose(transition_matrix)
 
@@ -156,6 +151,12 @@ def compute_pagerank(
     y = tf.expand_dims(y, axis=1)  # Make it a column vector
     for _ in range(max_iter):
         next_y = tf.sparse.sparse_dense_matmul(transition_matrix, y) * damping + (1 - damping) / num_nodes
+        if dead_end_strategy == "always-teleport":
+            # Sum the probability mass from all dead-end nodes at this iteration
+            dead_ends_probability_mass = tf.reduce_sum(tf.gather(y, dead_end_rows))
+            # Now add this mass uniformly to all nodes
+            next_y += dead_ends_probability_mass * damping / num_nodes
+
         if tf.reduce_max(tf.abs(next_y - y)) < tolerance:
             break  # Break if the maximum change is below the tolerance
         y = next_y
@@ -175,6 +176,7 @@ def main(
     damping: float,
     tolerance: float,
     max_iter: int,
+    dead_end_strategy: Literal["always-teleport", None],
     output: str | None,
 ) -> None:
     logger.info("Reading data from files...")
@@ -190,7 +192,9 @@ def main(
 
     logger.info("Computing PageRank...")
     time_start = time.time()
-    pagerank_values = compute_pagerank(airports, routes, damping=damping, tolerance=tolerance, max_iter=max_iter)
+    pagerank_values = compute_pagerank(
+        airports, routes, damping=damping, tolerance=tolerance, max_iter=max_iter, dead_end_strategy=dead_end_strategy
+    )
     time_end = time.time()
     logger.info(f"Finished computing PageRank in {time_end - time_start} seconds.")
     logger.info(f"Sorting airports by PageRank...")
@@ -217,6 +221,7 @@ if __name__ == "__main__":
     parser.add_argument("--damping", type=float, default=0.85, help="Damping factor for PageRank")
     parser.add_argument("--tolerance", type=float, default=1.0e-6, help="Tolerance for convergence")
     parser.add_argument("--max-iter", type=int, default=100, help="Maximum number of iterations for PageRank")
+    parser.add_argument("--dead-end-strategy", type=str, default=None, help="Strategy for handling dead-end nodes")
     parser.add_argument("--output", type=str, default=None, help="Output file for PageRank results")
     args = parser.parse_args()
-    main(args.airports, args.routes, args.damping, args.tolerance, args.max_iter, args.output)
+    main(args.airports, args.routes, args.damping, args.tolerance, args.max_iter, args.dead_end_strategy, args.output)

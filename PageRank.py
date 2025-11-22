@@ -126,6 +126,7 @@ def compute_pagerank(
     damping: float = 0.85,
     tolerance: float = 1.0e-6,
     max_iter: int = 100,
+    dead_end_strategy: Literal["always_teleport", None] = None,
 ) -> Sequence[float]:
     assert 0 < damping < 1, "Damping factor must be between 0 and 1."
     assert tolerance > 0, "Tolerance must be positive."
@@ -136,35 +137,33 @@ def compute_pagerank(
     num_nodes = int(adjacency_matrix.dense_shape[0])  # type: ignore
 
     # Transpose the adjacency matrix to get the correct direction for PageRank
-    transition_matrix = adjacency_matrix / tf.sparse.reduce_sum(adjacency_matrix, axis=1, keepdims=True)  # type: ignore
-    transition_matrix = tf.sparse.transpose(transition_matrix)
+    out_degrees = tf.sparse.reduce_sum(adjacency_matrix, axis=1, keepdims=True)  # Column vector of out-degrees
+    transition_matrix = adjacency_matrix / out_degrees  # type: ignore
 
-    def step(y_prev, adj):
-        y_prev = tf.expand_dims(y_prev, axis=1)
-        y_next = tf.sparse.sparse_dense_matmul(adj, y_prev) * damping + (1 - damping) / num_nodes
-        y_next = tf.squeeze(y_next, axis=1)
-        # y_next = y_next / tf.reduce_sum(y_next) # It should already sum to 1
-        return y_next
+    if dead_end_strategy == "always_teleport":
+        # Implement the "Always Teleport from Dead Ends" strategy
+        dead_end_rows = tf.where(tf.equal(out_degrees, 0))[:, 0]
+        for dead_end in dead_end_rows.numpy():
+            indices = tf.constant([[dead_end, i] for i in range(num_nodes)], dtype=tf.int64)
+            values = tf.fill([num_nodes], 1.0 / num_nodes)
+            dead_end_row = tf.sparse.SparseTensor(indices=indices, values=values, dense_shape=[num_nodes, num_nodes])
+            transition_matrix = tf.sparse.add(tf.sparse.reorder(transition_matrix), tf.sparse.reorder(dead_end_row))
+
+    transition_matrix = tf.sparse.transpose(transition_matrix)
 
     norm_warning_issued = False
     y = tf.ones(num_nodes, dtype=tf.float32) / tf.cast(num_nodes, tf.float32)
+    y = tf.expand_dims(y, axis=1)  # Make it a column vector
     for _ in range(max_iter):
-        next_y = step(y, transition_matrix)
+        next_y = tf.sparse.sparse_dense_matmul(transition_matrix, y) * damping + (1 - damping) / num_nodes
         if tf.reduce_max(tf.abs(next_y - y)) < tolerance:
-            # Break if the maximum change is below the tolerance
-            break
+            break  # Break if the maximum change is below the tolerance
         y = next_y
-        # Compute the 1-norm to check stability
-        norm = tf.reduce_sum(y)
+        norm = tf.reduce_sum(y)  # Compute the 1-norm to check stability
         if not norm_warning_issued and tf.abs(norm - 1.0) > 1.0e-6:
-            # NOTE: We should talk to the teacher about this. The norm obviously drifts,
-            # because of sink nodes, but it stabilizes very quick. Is it correct to re-normalize, as he proposes?
-            # I feel like we shouldn't. As long as PageRank converges, why should we care about the norm being 1?
-            # And also, it's not like it is caused by numerical instability or some other artifact, it's
-            # a property of the graph and the PageRank algorithm itself.
             logger.warning(f"PageRank vector 1-norm is deviating from 1: {norm.numpy()}")
             norm_warning_issued = True
-    return y.numpy()
+    return tf.squeeze(y, axis=1).numpy()
 
 
 logger = logging.getLogger(__name__)

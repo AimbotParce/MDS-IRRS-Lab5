@@ -1,6 +1,8 @@
 # Output file
 
-data/output.csv
+data/*.csv
+data/*.hdf5
+
 
 
 # Byte-compiled / optimized / DLL files

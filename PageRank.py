@@ -7,6 +7,7 @@ import time
 from collections import defaultdict
 from typing import List, Literal, Mapping, Optional, Sequence, cast
 
+import h5py
 import tensorflow as tf
 from pydantic import BaseModel
 
@@ -127,11 +128,16 @@ def compute_pagerank(
     tolerance: float = 1.0e-6,
     max_iter: int = 100,
     dead_end_strategy: Literal["always-teleport", None] = None,
+    log_steps: Optional[str] = None,
 ) -> Sequence[float]:
     assert 0 < damping < 1, "Damping factor must be between 0 and 1."
     assert tolerance > 0, "Tolerance must be positive."
     assert max_iter > 0, "Maximum iterations must be positive."
     assert dead_end_strategy in (None, "always-teleport"), "Invalid dead-end strategy."
+    assert log_steps == None or os.path.splitext(log_steps)[1] == ".hdf5", "Log steps file must be a HDF5 file."
+
+    if log_steps:
+        log_fd = h5py.File(log_steps, "w")
 
     # We'll attempt to simulate the power method.
     adjacency_matrix = compute_adjacency_matrix(airports, routes)
@@ -144,13 +150,28 @@ def compute_pagerank(
     if dead_end_strategy != None:
         dead_end_rows = tf.where(tf.equal(out_degrees, 0))[:, 0]
 
-    transition_matrix = tf.sparse.transpose(transition_matrix)
+    transpose_transition_matrix = tf.sparse.transpose(transition_matrix)
 
     norm_warning_issued = False
     y = tf.ones(num_nodes, dtype=tf.float32) / tf.cast(num_nodes, tf.float32)
     y = tf.expand_dims(y, axis=1)  # Make it a column vector
+
+    if log_steps:
+        log_fd.create_dataset("adjacency_matrix_indices", data=adjacency_matrix.indices)
+        log_fd.create_dataset("adjacency_matrix_values", data=adjacency_matrix.values)
+        log_fd.create_dataset("adjacency_matrix_shape", data=adjacency_matrix.dense_shape)
+        log_fd.create_dataset("out_degrees_index", data=out_degrees)
+        log_fd.create_dataset("transpose_transition_matrix_indices", data=transpose_transition_matrix.indices)
+        log_fd.create_dataset("transpose_transition_matrix_values", data=transpose_transition_matrix.values)
+        log_fd.create_dataset("transpose_transition_matrix_shape", data=transpose_transition_matrix.dense_shape)
+        log_pagerank = log_fd.create_dataset(
+            "pagerank_steps", (0, num_nodes), maxshape=(None, num_nodes), dtype="float32"
+        )
+        log_pagerank.resize(1, axis=0)
+        log_pagerank[0, :] = tf.squeeze(y, axis=1)
+
     for _ in range(max_iter):
-        next_y = tf.sparse.sparse_dense_matmul(transition_matrix, y) * damping + (1 - damping) / num_nodes
+        next_y = tf.sparse.sparse_dense_matmul(transpose_transition_matrix, y) * damping + (1 - damping) / num_nodes
         if dead_end_strategy == "always-teleport":
             # Sum the probability mass from all dead-end nodes at this iteration
             dead_ends_probability_mass = tf.reduce_sum(tf.gather(y, dead_end_rows))
@@ -160,6 +181,11 @@ def compute_pagerank(
         if tf.reduce_max(tf.abs(next_y - y)) < tolerance:
             break  # Break if the maximum change is below the tolerance
         y = next_y
+
+        if log_steps:
+            log_pagerank.resize(log_pagerank.shape[0] + 1, axis=0)
+            log_pagerank[log_pagerank.shape[0] - 1, :] = tf.squeeze(y, axis=1)
+
         norm = tf.reduce_sum(y)  # Compute the 1-norm to check stability
         if not norm_warning_issued and tf.abs(norm - 1.0) > 1.0e-6:
             logger.warning(f"PageRank vector 1-norm is deviating from 1: {norm.numpy()}")
@@ -177,6 +203,7 @@ def main(
     tolerance: float,
     max_iter: int,
     dead_end_strategy: Literal["always-teleport", None],
+    log_steps: str | None,
     output: str | None,
 ) -> None:
     logger.info("Reading data from files...")
@@ -193,7 +220,13 @@ def main(
     logger.info("Computing PageRank...")
     time_start = time.time()
     pagerank_values = compute_pagerank(
-        airports, routes, damping=damping, tolerance=tolerance, max_iter=max_iter, dead_end_strategy=dead_end_strategy
+        airports,
+        routes,
+        damping=damping,
+        tolerance=tolerance,
+        max_iter=max_iter,
+        dead_end_strategy=dead_end_strategy,
+        log_steps=log_steps,
     )
     time_end = time.time()
     logger.info(f"Finished computing PageRank in {time_end - time_start} seconds.")
@@ -222,6 +255,16 @@ if __name__ == "__main__":
     parser.add_argument("--tolerance", type=float, default=1.0e-6, help="Tolerance for convergence")
     parser.add_argument("--max-iter", type=int, default=100, help="Maximum number of iterations for PageRank")
     parser.add_argument("--dead-end-strategy", type=str, default=None, help="Strategy for handling dead-end nodes")
+    parser.add_argument("--log-steps", type=str, default=None, help="Log steps to specified file")
     parser.add_argument("--output", type=str, default=None, help="Output file for PageRank results")
     args = parser.parse_args()
-    main(args.airports, args.routes, args.damping, args.tolerance, args.max_iter, args.dead_end_strategy, args.output)
+    main(
+        args.airports,
+        args.routes,
+        args.damping,
+        args.tolerance,
+        args.max_iter,
+        args.dead_end_strategy,
+        args.log_steps,
+        args.output,
+    )

@@ -21,7 +21,7 @@ which you can get following their [installation guide](https://docs.astral.sh/uv
 To compute the PageRank of the airports, run the following command:
 
 ```bash
-uv run python PageRank.py --airports data/airports.csv --routes data/routes.csv --output results/pagerank_results.csv
+uv run python PageRank.py --airports data/airports.csv --routes data/routes.csv --output data/out/pagerank_results.csv
 ```
 
 You can control the parameters of the PageRank algorithm using the following optional arguments:
@@ -40,6 +40,6 @@ You can visualize the results using the provided plotting scripts, for example, 
 of the PageRank vector over iterations, as well as the evolution of the actual PageRank values for a few airports, run:
 
 ```bash
-uv run PlotConvergence.py results/your-log-file.hdf5 --show --output images/
+uv run PlotConvergence.py data/logs/your-log-file.hdf5 --show --output images/
 ```
 

@@ -4,7 +4,7 @@ This repository contains a Python implementation of the PageRank algorithm appli
 
 ## Dataset
 
-The dataset used in this project is a pair of CSV files named `airports.csv` and `routes.csv`, which contain information about various airports and their connections. It was taken from [OpenFlights](https://openflights.org/data).
+The dataset used in this project is a pair of CSV files named `data/airports.csv` and `data/routes.csv`, which contain information about various airports and their connections. It was taken from [OpenFlights](https://openflights.org/data).
 
 ## Installation
 

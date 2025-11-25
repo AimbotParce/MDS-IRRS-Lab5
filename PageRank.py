@@ -127,13 +127,13 @@ def compute_pagerank(
     damping: float = 0.85,
     tolerance: float = 1.0e-6,
     max_iter: int = 100,
-    dead_end_strategy: Literal["always-teleport", None] = None,
+    dead_end_strategy: Literal["always-teleport", "always-stay", None] = None,
     log_steps: Optional[str] = None,
 ) -> Sequence[float]:
-    assert 0 < damping < 1, "Damping factor must be between 0 and 1."
+    assert 0 < damping <= 1, "Damping factor must be between 0 and 1."
     assert tolerance > 0, "Tolerance must be positive."
     assert max_iter > 0, "Maximum iterations must be positive."
-    assert dead_end_strategy in (None, "always-teleport"), "Invalid dead-end strategy."
+    assert dead_end_strategy in (None, "always-teleport", "always-stay"), "Invalid dead-end strategy."
     assert log_steps == None or os.path.splitext(log_steps)[1] == ".hdf5", "Log steps file must be a HDF5 file."
 
     if log_steps:
@@ -149,6 +149,19 @@ def compute_pagerank(
 
     if dead_end_strategy != None:
         dead_end_rows = tf.where(tf.equal(out_degrees, 0))[:, 0]
+
+    if dead_end_strategy == "always-stay":
+        # For dead-end nodes, set the corresponding rows in the transition matrix to identity
+        dead_end_indices = tf.concat(
+            [tf.expand_dims(dead_end_rows, axis=1), tf.expand_dims(dead_end_rows, axis=1)], axis=1
+        )
+        dead_end_values = tf.ones_like(dead_end_rows, dtype=tf.float32)
+        dead_end_identity = tf.sparse.SparseTensor(
+            indices=dead_end_indices,
+            values=dead_end_values,
+            dense_shape=[num_nodes, num_nodes],
+        )
+        transition_matrix = tf.sparse.add(transition_matrix, dead_end_identity)
 
     transpose_transition_matrix = tf.sparse.transpose(transition_matrix)
 
@@ -202,7 +215,7 @@ def main(
     damping: float,
     tolerance: float,
     max_iter: int,
-    dead_end_strategy: Literal["always-teleport", None],
+    dead_end_strategy: Literal["always-teleport", "always-stay", None],
     log_steps: str | None,
     output: str | None,
 ) -> None:
